@@ -16,6 +16,8 @@
 
 package spray
 
+import scala.language.implicitConversions
+
 package object json {
 
   type JsField = (String, JsValue)
@@ -28,6 +30,7 @@ package object json {
   
   implicit def pimpAny[T](any: T) = new PimpedAny(any)
   implicit def pimpString(string: String) = new PimpedString(string)
+  implicit def jsonEnhance(sc: StringContext) = new JsonInterpolation(sc)
 }
 
 package json {

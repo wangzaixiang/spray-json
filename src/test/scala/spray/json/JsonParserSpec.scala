@@ -53,7 +53,7 @@ class JsonParserSpec extends Specification {
       JsonParser( "\"" + "/\\/\\u002f" + "\"") === JsString("///")
     }
     "parse a simple JsObject" in (
-      JsonParser(""" { "key" :42, "key2": "value" }""") ===
+      JsonParser(""" { "key" :42 , "key2": "value" }""") ===
               JsObject("key" -> JsNumber(42), "key2" -> JsString("value"))
     )
     "parse a simple JsArray" in (

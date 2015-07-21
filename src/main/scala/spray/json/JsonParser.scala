@@ -21,6 +21,8 @@ import java.lang.{StringBuilder => JStringBuilder}
 import java.nio.{CharBuffer, ByteBuffer}
 import java.nio.charset.Charset
 
+import scala.language.implicitConversions
+
 /**
  * Fast, no-dependency parser for JSON as defined by http://tools.ietf.org/html/rfc4627.
  */
@@ -45,9 +47,11 @@ class JsonParser(input: ParserInput) {
     jsValue
   }
 
+
   ////////////////////// GRAMMAR ////////////////////////
 
-  private final val EOI = '\uFFFF' // compile-time constant
+  private final val EOI = '\uFFFF' // compile-time constant End Of Input
+  private final val EOS = '\uFFFE' // compile-time constant, End Of Section (StringContext section), EOS means nextArg
 
   // http://tools.ietf.org/html/rfc4627#section-2.1
   private def `value`(): Unit = {
@@ -61,6 +65,7 @@ class JsonParser(input: ParserInput) {
       case '[' => advance(); `array`()
       case '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '-' => `number`()
       case '"' => `string`(); jsValue = if (sb.length == 0) JsString.empty else JsString(sb.toString)
+      case EOS =>  jsValue = input.currentArgument; advance(); ws();
       case _ => fail("JSON Value")
     }
   }
@@ -137,6 +142,7 @@ class JsonParser(input: ParserInput) {
   private def DIGIT(): Boolean = cursorChar >= '0' && cursorChar <= '9' && advance()
 
   // http://tools.ietf.org/html/rfc4627#section-2.5
+  // TODO support single-quoted string
   private def `string`(): Unit = {
     if (cursorChar == '"') cursorChar = input.nextUtf8Char() else fail("'\"'")
     sb.setLength(0)
@@ -227,20 +233,25 @@ trait ParserInput {
    */
   def nextUtf8Char(): Char
 
+  def currentArgument(): JsValue
+
   def cursor: Int
-  def length: Int
-  def sliceString(start: Int, end: Int): String
+  //def length: Int
+  //def sliceString(start: Int, end: Int): String
   def sliceCharArray(start: Int, end: Int): Array[Char]
   def getLine(index: Int): ParserInput.Line
 }
 
 object ParserInput {
   private final val EOI = '\uFFFF' // compile-time constant
+  private final val EOS = '\uFFFE' // compile-time constant
   private final val ErrorChar = '\uFFFD' // compile-time constant, universal UTF-8 replacement character '�'
 
   implicit def apply(string: String): StringBasedParserInput = new StringBasedParserInput(string)
   implicit def apply(chars: Array[Char]): CharArrayBasedParserInput = new CharArrayBasedParserInput(chars)
   implicit def apply(bytes: Array[Byte]): ByteArrayBasedParserInput = new ByteArrayBasedParserInput(bytes)
+
+  def apply(sc: StringContext, args: Seq[JsValue]): ParserInput = new InterpolationParserInput(sc, args)
 
   case class Line(lineNr: Int, column: Int, text: String)
 
@@ -277,6 +288,7 @@ object ParserInput {
       _cursor += 1
       if (_cursor < bytes.length) (bytes(_cursor) & 0xFF).toChar else EOI
     }
+    def currentArgument = throw new IllegalStateException
     def nextUtf8Char() = {
       @tailrec def decode(byte: Byte, remainingBytes: Int): Char = {
         byteBuffer.put(byte)
@@ -321,6 +333,7 @@ object ParserInput {
       _cursor += 1
       if (_cursor < string.length) string.charAt(_cursor) else EOI
     }
+    def currentArgument = throw new IllegalStateException
     def nextUtf8Char() = nextChar()
     def length = string.length
     def sliceString(start: Int, end: Int) = string.substring(start, end)
@@ -336,9 +349,50 @@ object ParserInput {
       _cursor += 1
       if (_cursor < chars.length) chars(_cursor) else EOI
     }
+    def currentArgument() = throw new IllegalStateException
     def nextUtf8Char() = nextChar()
     def length = chars.length
     def sliceString(start: Int, end: Int) = new String(chars, start, end - start)
     def sliceCharArray(start: Int, end: Int) = java.util.Arrays.copyOfRange(chars, start, end)
+  }
+
+  class InterpolationParserInput(sc: StringContext, args: Seq[JsValue]) extends ParserInput {
+    private var sectionCursor: Int = 0
+    private var section: String = sc.parts(sectionCursor)
+    private var _cursor: Int = -1
+
+    @tailrec
+    final def nextChar(): Char = {
+      _cursor += 1
+      if(_cursor < section.length) section.charAt(_cursor)
+      else if(_cursor == section.length) {
+        if(sectionCursor < sc.parts.length-1) EOS
+        else EOI
+      }
+      else { // switch to next section
+        if (sectionCursor < sc.parts.length - 1) {
+          sectionCursor += 1
+          section = sc.parts(sectionCursor)
+          _cursor = -1
+          nextChar()
+        }
+        else EOI
+      }
+    }
+
+    def currentArgument(): JsValue = args(sectionCursor)
+
+    override def nextUtf8Char(): Char = nextChar()
+
+    // TODO for report error
+    override def getLine(index: Int): Line = ???
+
+    override def cursor: Int = _cursor
+
+    override def sliceCharArray(start: Int, end: Int): Array[Char] = {
+      val chars = new Array[Char](end - start)
+      section.getChars(start, end, chars, 0)
+      chars
+    }
   }
 }
