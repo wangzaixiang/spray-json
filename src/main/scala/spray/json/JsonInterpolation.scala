@@ -22,9 +22,14 @@ class JsonInterpolation(sc: StringContext) {
       val results = collection.mutable.ArrayBuffer[JsValue]()
       Seq.range(0, sc.parts.length-1).foreach { x => results += null }
 
-      patternMatch(pattern, input, placeHolders, results)
+      try {
+        patternMatch(pattern, input, placeHolders, results)
+        Some(results.toSeq)
+      }
+      catch {
+        case ex: Throwable => None
+      }
 
-      Some(results.toSeq)
     }
 
     // array match
