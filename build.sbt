@@ -1,6 +1,6 @@
 name := "spray-json"
 
-version := "1.3.2"
+version := "1.3.3-SNAPSHOT"
 
 organization := "com.github.wangzaixiang"
 
@@ -11,3 +11,17 @@ libraryDependencies ++= Seq(
 )
 
 scalaVersion := "2.11.7"
+
+publishArtifact in Test := false
+
+pomIncludeRepository := { _ => false }
+
+publishTo := {
+  val nexus = "https://oss.sonatype.org/"
+  if ( version.value.endsWith("SNAPSHOT") )
+    Some("snapshots" at nexus + "content/repositories/snapshots")
+  else
+    Some("releases"  at nexus + "service/local/staging/deploy/maven2")
+}
+
+// resolvers += "Sonatype snapshots" at "https://oss.sonatype.org/content/repositories/snapshots/"
