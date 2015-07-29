@@ -14,10 +14,20 @@ object Test1 {
 //    val aa = new JsonParser(input).parseJsValue()
 //    println( aa )
 
+    /*
+    val input =
+      """{
+        "name": "wangzx",
+        "age": 40,
+        "email": "wangzx@iplas.com.cn"
+      }
+      """
+    new JsonParser(input).parseJsValue();
+    */
+
     val a =  json"""{"name": "wangzx", "age": 40}"""
     println("a =" + a.prettyPrint )
 
-    val size = augmentString("...").toString()
     val simple: JsValue = "wangzx"
     val age: JsValue = 43
     val books = JsArray(
@@ -26,7 +36,10 @@ object Test1 {
       JsObject("title"->"Polymer Book", "price"->39.99)
     )
     //val book2 = """[{title: "java Book"}]"
-    val obj = json"""{"name": $simple, "age": $age, "books": $books }"""
+    val obj =
+      json"""{"name": $simple,
+            "age", $age,
+            "books": $books }"""
 
     println( obj.prettyPrint )
 

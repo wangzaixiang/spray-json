@@ -27,14 +27,17 @@ import scala.language.implicitConversions
  * Fast, no-dependency parser for JSON as defined by http://tools.ietf.org/html/rfc4627.
  */
 object JsonParser {
+  final val EOI = '\uFFFF' // compile-time constant End Of Input
+  final val EOS = '\uFFFE' // compile-time constant, End Of Section (StringContext section), EOS means nextArg
+
   def apply(input: ParserInput): JsValue = new JsonParser(input).parseJsValue()
 
   class ParsingException(val summary: String, val detail: String = "")
     extends RuntimeException(if (summary.isEmpty) detail else if (detail.isEmpty) summary else summary + ":" + detail)
 }
 
-class JsonParser(input: ParserInput) {
-  import JsonParser.ParsingException
+class JsonParser(input: ParserInput, jsonExtensionSupport: Boolean = false) {
+  import JsonParser.{ParsingException, EOI, EOS }
 
   private[this] val sb = new JStringBuilder
   private[this] var cursorChar: Char = input.nextChar()
@@ -50,13 +53,12 @@ class JsonParser(input: ParserInput) {
 
   ////////////////////// GRAMMAR ////////////////////////
 
-  private final val EOI = '\uFFFF' // compile-time constant End Of Input
-  private final val EOS = '\uFFFE' // compile-time constant, End Of Section (StringContext section), EOS means nextArg
 
   // http://tools.ietf.org/html/rfc4627#section-2.1
   private def `value`(): Unit = {
     val mark = input.cursor
     def simpleValue(matched: Boolean, value: JsValue) = if (matched) jsValue = value else fail("JSON Value", mark)
+
     (cursorChar: @switch) match {
       case 'f' => simpleValue(`false`(), JsFalse)
       case 'n' => simpleValue(`null`(), JsNull)
@@ -65,6 +67,11 @@ class JsonParser(input: ParserInput) {
       case '[' => advance(); `array`()
       case '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '-' => `number`()
       case '"' => `string`(); jsValue = if (sb.length == 0) JsString.empty else JsString(sb.toString)
+      case '\'' =>
+        if(jsonExtensionSupport) {
+          single_quoted_string(); jsValue = if(sb.length == 0) JsString.empty else JsString(sb.toString)
+        }
+        else fail("JSON Value")
       case EOS =>  jsValue = input.currentArgument; advance(); ws();
       case _ => fail("JSON Value")
     }
@@ -79,7 +86,9 @@ class JsonParser(input: ParserInput) {
     ws()
     jsValue = if (cursorChar != '}') {
       @tailrec def members(map: Map[String, JsValue]): Map[String, JsValue] = {
-        `string`()
+        if(jsonExtensionSupport) IDorString()
+        else `string`()
+
         require(':')
         ws()
         val key = sb.toString
@@ -141,6 +150,34 @@ class JsonParser(input: ParserInput) {
 
   private def DIGIT(): Boolean = cursorChar >= '0' && cursorChar <= '9' && advance()
 
+  private def IDorString(): Unit = {
+    if(cursorChar == '"') `string`()
+    else if(cursorChar == '\'') single_quoted_string()
+    else if(cursorChar == '_' || cursorChar == '$' ||
+      (cursorChar >= 'a' && cursorChar <= 'z') || (cursorChar >= 'A' && cursorChar <= 'Z')) ID()
+    else fail("id or string")
+  }
+
+  private def `ID`(): Unit = {
+    val start = input.cursor
+    if(ID1()) {
+      var cont = true
+      do {
+        cont = ID2()
+      } while(cont)
+
+      sb.setLength(0)
+      sb.append(input.sliceCharArray(start, input.cursor))
+    }
+    else fail("ID")
+  }
+
+  private def `ID1`(): Boolean = (cursorChar == '_' || cursorChar == '$' ||
+    (cursorChar >= 'a' && cursorChar <= 'z') || (cursorChar >= 'A' && cursorChar <= 'Z')) && advance()
+
+  private def `ID2`(): Boolean = (cursorChar == '_' || cursorChar == '$' || (cursorChar >= '0' && cursorChar <= '9') ||
+    (cursorChar >= 'a' && cursorChar <= 'z') || (cursorChar >= 'A' && cursorChar <= 'Z')) && advance()
+
   // http://tools.ietf.org/html/rfc4627#section-2.5
   // TODO support single-quoted string
   private def `string`(): Unit = {
@@ -151,12 +188,29 @@ class JsonParser(input: ParserInput) {
     ws()
   }
 
+  private def single_quoted_string(): Unit = {
+    if(cursorChar == '\'') cursorChar = input.nextUtf8Char() else fail("'")
+    sb.setLength(0)
+    while(sqs_char()) cursorChar = input.nextUtf8Char()
+    require('\'')
+    ws
+  }
+
   private def `char`() =
     // simple bloom-filter that quick-matches the most frequent case of characters that are ok to append
     // (it doesn't match control chars, EOI, '"', '?', '\', 'b' and certain higher, non-ASCII chars)
-    if (((1L << cursorChar) & ((31 - cursorChar) >> 31) & 0x7ffffffbefffffffL) != 0L) appendSB(cursorChar)
+//    if (((1L << cursorChar) & ((31 - cursorChar) >> 31) & 0x7ffffffbefffffffL) != 0L) appendSB(cursorChar)
+    if (((1L << cursorChar) & ((31 - cursorChar) >> 31) & 0x3ffffffbefffffffL) != 0L) appendSB(cursorChar)
     else cursorChar match {
-      case '"' | EOI => false
+      case '"' | EOI | EOS => false
+      case '\\' => advance(); `escaped`()
+      case c => (c >= ' ') && appendSB(c)
+    }
+
+  // single-quoted-char
+  private def sqs_char() =
+    cursorChar match {
+      case '\'' | EOI | EOS => false
       case '\\' => advance(); `escaped`()
       case c => (c >= ' ') && appendSB(c)
     }
@@ -178,7 +232,7 @@ class JsonParser(input: ParserInput) {
       appendSB(value.toChar)
     }
     (cursorChar: @switch) match {
-      case '"' | '/' | '\\' => appendSB(cursorChar)
+      case '"' | '/' | '\\' | '\'' => appendSB(cursorChar)
       case 'b' => appendSB('\b')
       case 'f' => appendSB('\f')
       case 'n' => appendSB('\n')
@@ -243,8 +297,8 @@ trait ParserInput {
 }
 
 object ParserInput {
-  private final val EOI = '\uFFFF' // compile-time constant
-  private final val EOS = '\uFFFE' // compile-time constant
+  import JsonParser.{EOI, EOS}
+
   private final val ErrorChar = '\uFFFD' // compile-time constant, universal UTF-8 replacement character '�'
 
   implicit def apply(string: String): StringBasedParserInput = new StringBasedParserInput(string)
@@ -256,16 +310,23 @@ object ParserInput {
   case class Line(lineNr: Int, column: Int, text: String)
 
   abstract class DefaultParserInput extends ParserInput {
-    protected var _cursor: Int = -1
+    private var _$cursor: Int = -1
+
+    protected def _cursor = _$cursor
+    protected def _cursor_=(pos: Int) = _$cursor = pos
+
     def cursor = _cursor
     def getLine(index: Int): Line = {
       val sb = new java.lang.StringBuilder
-      @tailrec def rec(ix: Int, lineStartIx: Int, lineNr: Int): Line =
-        nextUtf8Char() match {
+      @tailrec def rec(ix: Int, lineStartIx: Int, lineNr: Int): Line = {
+        val nc = nextUtf8Char()
+        nc match {
           case '\n' if index > ix => sb.setLength(0); rec(ix + 1, ix + 1, lineNr + 1)
           case '\n' | EOI => Line(lineNr, index - lineStartIx + 1, sb.toString)
+          case EOS => sb.append("$?"); rec(ix+1, lineStartIx, lineNr)
           case c => sb.append(c); rec(ix + 1, lineStartIx, lineNr)
         }
+      }
       val savedCursor = _cursor
       _cursor = -1
       val line = rec(ix = 0, lineStartIx = 0, lineNr = 1)
@@ -356,43 +417,72 @@ object ParserInput {
     def sliceCharArray(start: Int, end: Int) = java.util.Arrays.copyOfRange(chars, start, end)
   }
 
-  class InterpolationParserInput(sc: StringContext, args: Seq[JsValue]) extends ParserInput {
-    private var sectionCursor: Int = 0
-    private var section: String = sc.parts(sectionCursor)
-    private var _cursor: Int = -1
+  class InterpolationParserInput(sc: StringContext, args: Seq[JsValue]) extends DefaultParserInput {
+    private var _gCursor = -1
 
-    @tailrec
-    final def nextChar(): Char = {
-      _cursor += 1
-      if(_cursor < section.length) section.charAt(_cursor)
-      else if(_cursor == section.length) {
-        if(sectionCursor < sc.parts.length-1) EOS
-        else EOI
-      }
-      else { // switch to next section
-        if (sectionCursor < sc.parts.length - 1) {
-          sectionCursor += 1
-          section = sc.parts(sectionCursor)
-          _cursor = -1
+    private var _sectionIndex = 0 // 0 .. sc.parts.length-1
+    private var _sectionContent: String = sc.parts(0)
+    private var _sectionCursor = -1 // the current cursor inside current section
+    private var _sectionStartCursor = 0
+
+    def switchToNextSection(): Unit = {
+      _sectionIndex += 1
+      _sectionContent = sc.parts(_sectionIndex)
+      _sectionStartCursor = _cursor
+      _sectionCursor = 0
+    }
+
+    override def _cursor = _gCursor
+
+    // only used in error recover
+    override def _cursor_=(pos: Int) = {
+      _gCursor = -1
+      _sectionIndex = 0
+      _sectionContent = sc.parts(0)
+      _sectionCursor = -1
+      _sectionStartCursor = 0
+
+      move(pos)
+
+      @tailrec
+      def move(steps: Int): Unit = {
+        if(steps >= 0) {
           nextChar()
+          move(steps-1)
         }
+      }
+    }
+
+    final def nextChar(): Char = {
+      _gCursor += 1
+      _sectionCursor += 1
+
+      if(_sectionCursor > _sectionContent.length && _sectionIndex >= sc.parts.length - 1) {
+        EOI
+      }
+      else {
+        if (_sectionCursor > _sectionContent.length) { // move to next section
+          switchToNextSection()
+        }
+
+        // _sectionCursor [0 .. length-1] -> return char
+        //  length -> EOS|EOI
+        if (_sectionCursor < _sectionContent.length) _sectionContent.charAt(_sectionCursor)
+        else if (_sectionIndex < sc.parts.length - 1) EOS
         else EOI
       }
     }
 
-    def currentArgument(): JsValue = args(sectionCursor)
+    def currentArgument(): JsValue = args(_sectionIndex)
 
     override def nextUtf8Char(): Char = nextChar()
 
-    // TODO for report error
-    override def getLine(index: Int): Line = ???
-
-    override def cursor: Int = _cursor
-
+    // start and end must inside 1 section
     override def sliceCharArray(start: Int, end: Int): Array[Char] = {
       val chars = new Array[Char](end - start)
-      section.getChars(start, end, chars, 0)
+      _sectionContent.getChars(start - _sectionStartCursor, end - _sectionStartCursor, chars, 0)
       chars
     }
   }
+
 }

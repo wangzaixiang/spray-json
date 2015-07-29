@@ -6,18 +6,24 @@ import scala.collection.SortedMap
  * Created by wangzx on 15/7/6.
  */
 
+// TODO default using disable but you can override it
+trait JsonExtension { val enable: Boolean }
+object JsonExtensionEnable extends JsonExtension { val enable = true }
+object JsonExtensionDisable extends JsonExtension { val enable = false }
+
 class JsonInterpolation(sc: StringContext) {
 
   object json {
 
-    def apply(args: JsValue*): JsValue = new JsonParser(ParserInput(sc, args)).parseJsValue()
+    def apply(args: JsValue*): JsValue =
+      new JsonParser(ParserInput(sc, args), true).parseJsValue()
 
     def unapplySeq(input: JsValue): Option[Seq[JsValue]] = {
 
       val placeHolders = Seq.range(0, sc.parts.length-1).map(x => JsNumber(Integer.MAX_VALUE - x) )
 
       val pi = ParserInput(sc, placeHolders)
-      val pattern = new JsonParser(pi).parseJsValue()
+      val pattern = new JsonParser(pi, true).parseJsValue()
 
       val results = collection.mutable.ArrayBuffer[JsValue]()
       Seq.range(0, sc.parts.length-1).foreach { x => results += null }
@@ -32,7 +38,7 @@ class JsonInterpolation(sc: StringContext) {
 
     }
 
-    // array match
+    // TODO report friendly
     private def patternMatch(pattern: JsValue, input: JsValue, placeHolders: Seq[JsValue], results: collection.mutable.ArrayBuffer[JsValue]): Unit = {
 
       def isPlaceHolder(value: JsNumber) = {
