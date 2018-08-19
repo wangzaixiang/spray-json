@@ -20,8 +20,8 @@ package spray.json
 /**
   * Provides all the predefined JsonFormats.
  */
-trait DefaultJsonProtocol
-        extends BasicFormats
+trait DefaultJsonProtocol extends CaseFormats
+        with BasicFormats
         with StandardFormats
         with CollectionFormats
         with ProductFormats
