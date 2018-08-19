@@ -1,0 +1,39 @@
+version 1.3.5
+
+add support for JsonFormat[T] which T is a case class.
+=== 
+
+in previous version,  your code look like:
+```scala
+case class Color(name: String, red: Int, green: Int, blue: Int)
+
+object MyJsonProtocol extends DefaultJsonProtocol {
+  implicit val colorFormat = jsonFormat4(Color)
+}
+
+import MyJsonProtocol._
+import spray.json._
+
+val json = Color("CadetBlue", 95, 158, 160).toJson
+val color = json.convertTo[Color]
+
+```
+
+and now, you can using the following code snippet:
+```scala
+case class Color(name: String, red: Int, green: Int, blue: Int)
+
+import spray.json._
+import DefaultJsonProtocol._
+
+val json = Color("CadetBlue", 95, 158, 160).toJson
+val color = json.convertTo[Color]
+
+```
+
+- You need not define a MyJsonProtocol again. the DefaultJsonProtocol now support case class without more code
+- No 22 field limit, You can using 22+ fields
+- to get a JsonFormat[Color], you can using `DefaultJsonProtocol.material[Color]` 
+
+That's all of 1.3.5, less code, more function.
+==
