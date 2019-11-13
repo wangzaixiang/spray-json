@@ -1,5 +1,19 @@
 version 1.3.5
 
+add json string interpolation
+===
+```scala
+val name = "wangzx"
+val email = "wangzx@qq.com"
+
+val user = json"{name: $name, email:$email }"
+
+// used in pattern match 
+val json"{name: $n, email: $m}" = user
+println("name = $n, email = $m"
+```
+
+
 add support for JsonFormat[T] which T is a case class.
 === 
 
